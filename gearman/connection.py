@@ -13,6 +13,30 @@ from gearman.protocol import GEARMAN_PARAMS_FOR_COMMAND, GEARMAN_COMMAND_TEXT_CO
 
 gearman_logger = logging.getLogger(__name__)
 
+'''doc by lipp
+incoming
+	data flow:
+		kernel_socket_recvqueue  		-> 		_incomming_buffer 		->  	_incomming_commands		
+	func proc:
+								read_data_from_socket				read_commands_from_buffer			client interface		
+								socket.recv							_unpack_command						read_command
+outgoing
+	data flow:
+		_outcomming_commands 			->		_outcomming_buffer		->  	kernet_socket_sendqueue
+	func proc:
+		send_command			 send_commands_to_buffer						send_commands_to_socket
+								_pack_command									socket.send								
+								
+# 远程方法调用格式 (详见 gearman.protocol)
+	cmd_type	#调用方法的方式：text/binary
+	cmd_args	#参数
+	
+## text
+	pack_text_command
+## binary
+	pack_binary_command
+'''
+
 class GearmanConnection(object):
     """A connection between a client/worker and a server.  Can be used to reconnect (unlike a socket)
 
@@ -88,7 +112,8 @@ class GearmanConnection(object):
             self.throw_exception(message='connection already established')
 
         current_time = time.time()
-        if current_time < self.allowed_connect_time:
+        if current_time < self.allowed_connect_time: 	#这是ip地址重用？ for TIME_WAIT: ip重连采用设置socket选项 REUSE
+														#s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.throw_exception(message='attempted to connect before required cooldown')
 
         self.allowed_connect_time = current_time + self.connect_cooldown_seconds
@@ -125,9 +150,9 @@ class GearmanConnection(object):
         if self.gearman_socket:
             self.throw_exception(message='socket already bound')
 
-        current_socket.setblocking(0)
-        current_socket.settimeout(0.0)
-        current_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, struct.pack('L', 1))
+        current_socket.setblocking(0)	#设置为非阻塞IO
+        current_socket.settimeout(0.0)	#blocking timeout设置为0.0 ，即没有等待时间（必须的？）
+        current_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, struct. 	('L', 1))
         self.gearman_socket = current_socket
 
     def read_command(self):
@@ -172,10 +197,10 @@ class GearmanConnection(object):
                     continue
                 else:
                     self.throw_exception(exception=e)
-            except socket.error, socket_exception:
+            except socket.error, socket_exception:	# EAGAIN会作为exception到这来。socket.error: [Errno 11] Resource temporarily unavailable
                 self.throw_exception(exception=socket_exception)
 
-            if len(recv_buffer) == 0:
+            if len(recv_buffer) == 0:				# 返回空串，等同与linux socket 返回 0
                 self.throw_exception(message='remote disconnected')
             break
 

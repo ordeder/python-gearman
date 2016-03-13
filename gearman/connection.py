@@ -16,7 +16,7 @@ gearman_logger = logging.getLogger(__name__)
 '''doc by lipp
 incoming
 	data flow:
-		kernel_socket_recvqueue  		-> 		_incomming_buffer 		->  	_incomming_commands		
+		kernel_socket_recvqueue  		-> 		_incomming_buffer（命令rowdata） 		->  	_incomming_commands（命令队列）		
 	func proc:
 								read_data_from_socket				read_commands_from_buffer			client interface		
 								socket.recv							_unpack_command						read_command
@@ -80,11 +80,11 @@ class GearmanConnection(object):
         self._is_server_side = None
 
         # Reset all our raw data buffers
-        self._incoming_buffer = array.array('c')
+        self._incoming_buffer = array.array('c') # 
         self._outgoing_buffer = ''
 
         # Toss all commands we may have sent or received
-        self._incoming_commands = collections.deque()
+        self._incoming_commands = collections.deque() # 命令队列（命令格式：(cmd_type, cmd_args)）
         self._outgoing_commands = collections.deque()
 
     def fileno(self):
@@ -104,7 +104,7 @@ class GearmanConnection(object):
 
     def readable(self):
         """Returns True if we might have data to read"""
-        return self.connected
+        return self.connected # 这里添加 _incoming_buffer 长度限定？ 否则buffer会无限制大小
 
     def connect(self):
         """Connect to the server. Raise ConnectionError if connection fails."""

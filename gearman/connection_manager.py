@@ -36,6 +36,23 @@ class NoopEncoder(DataEncoder):
         cls._enforce_byte_string(decodable_string)
         return decodable_string
 
+'''doc by lippsu 2016/03/13
+
+# 结构：
+gearmanConnection(sock_buff&command_queue) queue -------+
+														|
+io.poller (read/write/except)conn事件-------------------+---- connectionManager ----?--- clinet/worker
+														|
+commandHandler (命令回调)-------------------------------+
+
+# 事件驱动：
+1. io.poller：socket事件驱动，获得三个队列（可读、可写、错误）的gearmanConnection
+2. socket事件处理：
+	对可读队列的connect：读取socket数据，解析为命令，加入到命令队列，并执行命令（commandHandler）
+	对于可写队列connect：将connect中的命令队列命令打包，加入到socket待发送数据队列，最后执行发送socket数据
+	对于错误（exception），删除connectionManager中该conn
+'''		
+		
 class GearmanConnectionManager(object):
     """Abstract base class for any Gearman-type client that needs to connect/listen to multiple connections
 
@@ -46,7 +63,7 @@ class GearmanConnectionManager(object):
     Automatically encodes all 'data' fields as specified in protocol.py
     """
     command_handler_class = None
-    connection_class = GearmanConnection
+    connection_class = GearmanConnection #对象可配置，链接的具体实现方式由这个类实现，Manager负责链接之上和command_handler对接
 
     job_class = GearmanJob
     job_request_class = GearmanJobRequest
@@ -177,20 +194,20 @@ class GearmanConnectionManager(object):
             if not conn.gearman_socket:
                 continue
             events = 0
-            if conn.readable():
+            if conn.readable(): # conn已连接
                 events |= gearman.io.READ
-            if conn.writable():
+            if conn.writable(): # conn已建立连接 & 有等待写的数据
                 events |= gearman.io.WRITE
             poller.register(conn, events)
 
-    def poll_connections_until_stopped(self, submitted_connections, callback_fxn, timeout=None):
+    def poll_connections_until_stopped(self, submitted_connections, callback_fxn, timeout=None): # 函数为适配器模式，poller可以为select或者epoll
         """Continue to poll our connections until we receive a stopping condition"""
         stopwatch = gearman.util.Stopwatch(timeout)
         submitted_connections = set(submitted_connections)
         connection_map = {}
 
         any_activity = False
-        callback_ok = callback_fxn(any_activity)
+        callback_ok = callback_fxn(any_activity) # ?
         connection_ok = compat.any(current_connection.connected for current_connection in submitted_connections)
         poller = gearman.io.get_connection_poller()
         if connection_ok:
@@ -204,9 +221,11 @@ class GearmanConnectionManager(object):
             if time_remaining == 0.0:
                 break
 
+			#返回三个conn队列，分别存可读，可写和exception的conn
             # Do a single robust select and handle all connection activity
             read_connections, write_connections, dead_connections = self.poll_connections_once(poller, connection_map, timeout=time_remaining)
 
+			#对三种事件队列：处理事件
             # Handle reads and writes and close all of the dead connections
             read_connections, write_connections, dead_connections = self.handle_connection_activity(read_connections, write_connections, dead_connections)
 
@@ -237,7 +256,7 @@ class GearmanConnectionManager(object):
         current_connection.read_commands_from_buffer()
 
         # Notify the handler that we have commands to fetch
-        current_handler.fetch_commands()
+        current_handler.fetch_commands() # 从conn.cmd_buf 读取命令并执行回调函数
 
     def handle_write(self, current_connection):
         # Transfer command from command queue -> buffer
